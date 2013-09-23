@@ -25,7 +25,7 @@ class Module {
                     $config = $sm->get('config');
                     try {
                         $client = new \GearmanClient();
-                        $client->addServers($config['gearman']['servers']);
+                        $client->addServers($config['gearman']['host']);
                         return $client;
                     } catch (\Exception $e) {
                         $sm->get('Zend\Log')->emerg('Gearman client cant connect to server! Message: ' . $e->getMessage());
@@ -36,7 +36,7 @@ class Module {
                     $worker = new \GearmanWorker();
                     $worker->setOptions(GEARMAN_WORKER_NON_BLOCKING);
                     $worker->setTimeout($config['gearman']['timeout']);
-                    $worker->addServers($config['gearman']['servers']);
+                    $worker->addServers($config['gearman']['host']);
                     return $worker;
                 },
                 'ZfGearmanPeclManager' => function ($sm) {
