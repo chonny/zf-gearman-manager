@@ -6,6 +6,7 @@ use GearmanManager\Bridge\GearmanPeclManager;
 use Zend\ServiceManager\ServiceLocatorAwareInterface;
 use Zend\ServiceManager\ServiceLocatorInterface;
 use ZfGearmanManager\Worker\WorkerInterface;
+use GearmanManager\GearmanManager;
 
 class ZfGearmanPeclManager extends GearmanPeclManager implements ServiceLocatorAwareInterface
 {
@@ -76,7 +77,240 @@ class ZfGearmanPeclManager extends GearmanPeclManager implements ServiceLocatorA
 
         $this->log("Exiting");
     }
+    /**
+     * Parses the config file
+     *
+     * @param   string    $file     The config file. Just pass so we don't have
+     *                              to keep it around in a var
+     */
+    protected function parse_config() {
 
+        $config = $this->getServiceLocator()->get('config');
+        if (isset($config['gearman_manager'])) {
+            $this->config = $config['gearman_manager'];
+            $this->config['functions'] = array();
+        }
+
+        foreach($config['gearman_manager']['workers'] as $function=>$data){
+                $this->config['functions'][$function] = $data;
+
+        }
+
+    }
+     /**
+     * Parses the command line options
+     *
+     */
+    protected function getopt() {
+        $config = $this->getServiceLocator()->get('config');
+        $opts = getopt("ac:dD:h:Hl:o:p:P:u:v::w:r:x:Z");
+
+        if(isset($opts["H"])){
+            $this->show_help();
+        }
+        if(!isset($config['gearman_menager'])){
+            $this->show_help("Config file should contains gearman_manager section.");
+        }
+
+        /**
+         * parse the config file
+         */
+        $this->parse_config();
+
+        /**
+         * command line opts always override config file
+         */
+        if (isset($opts['P'])) {
+            $this->config['pid_file'] = $opts['P'];
+        }
+
+        if(isset($opts["l"])){
+            $this->config['log_file'] = $opts["l"];
+        }
+
+        if (isset($opts['a'])) {
+            $this->config['auto_update'] = 1;
+        }
+
+        if (isset($opts['w'])) {
+            $this->config['worker_dir'] = $opts['w'];
+        }
+
+        if (isset($opts['x'])) {
+            $this->config['max_worker_lifetime'] = (int)$opts['x'];
+        }
+
+        if (isset($opts['r'])) {
+            $this->config['max_runs_per_worker'] = (int)$opts['r'];
+        }
+
+        if (isset($opts['D'])) {
+            $this->config['count'] = (int)$opts['D'];
+        }
+
+        if (isset($opts['t'])) {
+            $this->config['timeout'] = $opts['t'];
+        }
+
+        if (isset($opts['h'])) {
+            $this->config['host'] = $opts['h'];
+        }
+
+        if (isset($opts['p'])) {
+            $this->prefix = $opts['p'];
+        } elseif(!empty($this->config['prefix'])) {
+            $this->prefix = $this->config['prefix'];
+        }
+
+        if(isset($opts['u'])){
+            $this->user = $opts['u'];
+        } elseif(isset($this->config["user"])){
+            $this->user = $this->config["user"];
+        }
+
+        /**
+         * If we want to daemonize, fork here and exit
+         */
+        if(isset($opts["d"]) || (isset($this->config['daemonize']) && $this->config['daemonize'])){
+            $pid = pcntl_fork();
+            if($pid>0){
+                $this->isparent = false;
+                exit();
+            }
+            $this->pid = getmypid();
+            posix_setsid();
+        }
+
+        if(!empty($this->config['pid_file'])){
+            $fp = @fopen($this->config['pid_file'], "w");
+            if($fp){
+                fwrite($fp, $this->pid);
+                fclose($fp);
+            } else {
+                $this->show_help("Unable to write PID to {$this->config['pid_file']}");
+            }
+            $this->pid_file = $this->config['pid_file'];
+        }
+
+        if(!empty($this->config['log_file'])){
+            if($this->config['log_file'] === 'syslog'){
+                $this->log_syslog = true;
+            } else {
+                $this->log_file = $this->config['log_file'];
+                $this->open_log_file();
+            }
+        }
+
+        if(isset($opts["v"])){
+            switch($opts["v"]){
+                case false:
+                    $this->verbose = GearmanManager::LOG_LEVEL_INFO;
+                    break;
+                case "v":
+                    $this->verbose = GearmanManager::LOG_LEVEL_PROC_INFO;
+                    break;
+                case "vv":
+                    $this->verbose = GearmanManager::LOG_LEVEL_WORKER_INFO;
+                    break;
+                case "vvv":
+                    $this->verbose = GearmanManager::LOG_LEVEL_DEBUG;
+                    break;
+                case "vvvv":
+                default:
+                    $this->verbose = GearmanManager::LOG_LEVEL_CRAZY;
+                    break;
+            }
+        }
+
+        if($this->user) {
+            $user = posix_getpwnam($this->user);
+            if (!$user || !isset($user['uid'])) {
+                $this->show_help("User ({$this->user}) not found.");
+            }
+
+            /**
+             * Ensure new uid can read/write pid and log files
+             */
+            if(!empty($this->pid_file)){
+                if(!chown($this->pid_file, $user['uid'])){
+                    $this->log("Unable to chown PID file to {$this->user}", GearmanManager::LOG_LEVEL_PROC_INFO);
+                }
+            }
+            if(!empty($this->log_file_handle)){
+                if(!chown($this->log_file, $user['uid'])){
+                    $this->log("Unable to chown log file to {$this->user}", GearmanManager::LOG_LEVEL_PROC_INFO);
+                }
+            }
+
+            posix_setuid($user['uid']);
+            if (posix_geteuid() != $user['uid']) {
+                $this->show_help("Unable to change user to {$this->user} (UID: {$user['uid']}).");
+            }
+            $this->log("User set to {$this->user}", GearmanManager::LOG_LEVEL_PROC_INFO);
+        }
+
+        if(!empty($this->config['auto_update'])){
+            $this->check_code = true;
+        }
+
+//        if(!empty($this->config['worker_dir'])){
+//            $this->worker_dir = $this->config['worker_dir'];
+//        } else {
+//            $this->worker_dir = "./workers";
+//        }
+//
+//        $dirs = explode(",", $this->worker_dir);
+//        foreach($dirs as &$dir){
+//            $dir = trim($dir);
+//            if(!file_exists($dir)){
+//                $this->show_help("Worker dir ".$dir." not found");
+//            }
+//        }
+//        unset($dir);
+
+        if(isset($this->config['max_worker_lifetime']) && (int)$this->config['max_worker_lifetime'] > 0){
+            $this->max_run_time = (int)$this->config['max_worker_lifetime'];
+        }
+
+        if(isset($this->config['worker_restart_splay']) && (int)$this->config['worker_restart_splay'] > 0){
+            $this->worker_restart_splay = (int)$this->config['worker_restart_splay'];
+        }
+
+        if(isset($this->config['count']) && (int)$this->config['count'] > 0){
+            $this->do_all_count = (int)$this->config['count'];
+        }
+
+        if(!empty($this->config['host'])){
+            if(!is_array($this->config['host'])){
+                $this->servers = explode(",", $this->config['host']);
+            } else {
+                $this->servers = $this->config['host'];
+            }
+        } else {
+            $this->servers = array("127.0.0.1");
+        }
+
+        if (!empty($this->config['include']) && $this->config['include'] != "*") {
+            $this->config['include'] = explode(",", $this->config['include']);
+        } else {
+            $this->config['include'] = array();
+        }
+
+        if (!empty($this->config['exclude'])) {
+            $this->config['exclude'] = explode(",", $this->config['exclude']);
+        } else {
+            $this->config['exclude'] = array();
+        }
+
+        /**
+         * Debug option to dump the config and exit
+         */
+        if(isset($opts["Z"])){
+            print_r($this->config);
+            exit();
+        }
+
+    }
     /**
      * Set service locator
      *
@@ -107,22 +341,22 @@ class ZfGearmanPeclManager extends GearmanPeclManager implements ServiceLocatorA
     protected function load_workers()
     {
         $config = $this->getServiceLocator()->get('Config');
-        if (!isset($config['gearman_workers']) || empty($config['gearman_workers'])) {
+        if (!isset($config['gearman_manager']['workers']) || empty($config['gearman_manager']['workers'])) {
             return;
         }
 
-        $workers = $config['gearman_workers'];
+        $workers = $config['gearman_manager']['workers'];
 
         $this->log('Loading '.count($workers) .' worker(s) from config');
 
         $this->functions = array();
 
-        foreach ($workers as $function => $workerFqcn) {
+        foreach ($workers as $function => $w_options) {
 
             // TODO include/exclude functionality from GearmanManager
 
             if (!isset($this->functions[$function])){
-                $this->functions[$function] = array();
+                $this->functions[$function] = $w_options;
             }
 
             if (!empty($this->config['functions'][$function]['dedicated_only'])){
@@ -183,12 +417,12 @@ class ZfGearmanPeclManager extends GearmanPeclManager implements ServiceLocatorA
      *
      */
     protected function start_lib_worker($worker_list, $timeouts = array()) {
-
-        $thisWorker = new \GearmanWorker();
-
-        $thisWorker->addOptions(GEARMAN_WORKER_NON_BLOCKING);
-
-        $thisWorker->setTimeout(5000);
+        $thisWorker = $this->getServiceLocator()->get('GearmanWorker');
+//        $thisWorker = new \GearmanWorker();
+//
+//        $thisWorker->addOptions(GEARMAN_WORKER_NON_BLOCKING);
+//
+//        $thisWorker->setTimeout(5000);
 
         foreach($this->servers as $s){
             $this->log("Adding server $s", self::LOG_LEVEL_WORKER_INFO);
