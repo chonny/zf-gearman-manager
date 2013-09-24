@@ -11,5 +11,10 @@ interface WorkerInterface
      * @param  array $log
      * @return boolean
      */
-    public function run($job, &$log);
+    public function run($job);
+    /**
+     * Logs of the job while execution
+     * return array
+     */
+    public function getLog();
 }

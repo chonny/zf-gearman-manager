@@ -553,7 +553,8 @@ class ZfGearmanPeclManager extends GearmanPeclManager implements ServiceLocatorA
          */
         if(isset($objects[$job_name])){
             $this->log("($h) Calling object for $job_name.", self::LOG_LEVEL_DEBUG);
-            $result = $objects[$job_name]->run($job, $log);
+            $result = $objects[$job_name]->run($job);
+            $log = $objects[$job_name]->getLog();
             unset($objects[$job_name]);
 
         } elseif(function_exists($func)) {
