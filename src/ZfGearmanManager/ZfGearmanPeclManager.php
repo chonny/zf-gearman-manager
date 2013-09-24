@@ -47,13 +47,12 @@ class ZfGearmanPeclManager extends GearmanPeclManager implements ServiceLocatorA
 
         // Parse command line options. Loads the config file as well
         $this->getopt();
-
+        
         // Register signal listeners
         $this->register_ticks();
-
+        
         // Load up the workers
         $this->load_workers();
-
         if (empty($this->functions)){
             $this->log("No workers found");
             posix_kill($this->pid, SIGUSR1);
@@ -83,15 +82,34 @@ class ZfGearmanPeclManager extends GearmanPeclManager implements ServiceLocatorA
      * @param   string    $file     The config file. Just pass so we don't have
      *                              to keep it around in a var
      */
-    protected function parse_config() {
+    protected function parse_config($file) {
+        $this->log("Loading configuration from $file");
 
+        if (substr($file, -4) == ".php"){
+
+            require $file;
+
+        } elseif(substr($file, -4) == ".ini"){
+
+            $gearman_config = parse_ini_file($file, true);
+
+        }
         $config = $this->getServiceLocator()->get('config');
-        if (isset($config['gearman_manager'])) {
-            $this->config = $config['gearman_manager'];
-            $this->config['functions'] = array();
+
+        if (empty($gearman_config) && !isset($config['gearman_manager'])){
+            $this->show_help("No configuration found in $file and application config");
+        }
+        if(isset($config['gearman_manager']) && isset($gearman_config['gearman_manager'])){
+            $conf = array_merge($config['gearman_manager'],$gearman_config['gearman_manager']);
+        }else{
+            $conf = $config['gearman_manager'];
         }
 
-        foreach($config['gearman_manager']['workers'] as $function=>$data){
+        
+        $this->config = $conf;
+        $this->config['functions'] = array();
+
+        foreach($conf['workers'] as $function=>$data){
                 $this->config['functions'][$function] = $data;
 
         }
@@ -108,14 +126,14 @@ class ZfGearmanPeclManager extends GearmanPeclManager implements ServiceLocatorA
         if(isset($opts["H"])){
             $this->show_help();
         }
-        if(!isset($config['gearman_menager'])){
+        if(!isset($config['gearman_manager'])){
             $this->show_help("Config file should contains gearman_manager section.");
         }
 
         /**
          * parse the config file
          */
-        $this->parse_config();
+        $this->parse_config(null);
 
         /**
          * command line opts always override config file
@@ -423,7 +441,6 @@ class ZfGearmanPeclManager extends GearmanPeclManager implements ServiceLocatorA
 //        $thisWorker->addOptions(GEARMAN_WORKER_NON_BLOCKING);
 //
 //        $thisWorker->setTimeout(5000);
-
         foreach($this->servers as $s){
             $this->log("Adding server $s", self::LOG_LEVEL_WORKER_INFO);
             $thisWorker->addServers($s);
@@ -503,7 +520,12 @@ class ZfGearmanPeclManager extends GearmanPeclManager implements ServiceLocatorA
         $fqcn = $this->getWorkerFqcn($job_name);
         if ($fqcn) {
             $this->log("Creating a $func object", self::LOG_LEVEL_WORKER_INFO);
-            $objects[$job_name] = $this->getServiceLocator()->get($fqcn);
+            if( $this->getServiceLocator()->has($fqcn)){
+                $objects[$job_name] = $this->getServiceLocator()->get($fqcn);
+            }else{
+                $this->log("Service manager can't find the worker definitiion $fqcn");
+                return;
+            }
 
             if (!$objects[$job_name] || !is_object($objects[$job_name])) {
                 $this->log("Invalid worker class registered for $job_name (not an object?)");
@@ -601,11 +623,11 @@ class ZfGearmanPeclManager extends GearmanPeclManager implements ServiceLocatorA
     protected function getWorkerFqcn($func)
     {
         $config = $this->getServiceLocator()->get('Config');
-        if (!isset($config['gearman_workers']) || !isset($config['gearman_workers'][$func])) {
+        if (!isset($config['gearman_manager']) || !isset($config['gearman_manager']['workers'][$func])) {
             return false;
         }
 
-        return $config['gearman_workers'][$func];
+        return $config['gearman_manager']['workers'][$func]['worker'];
     }
 
     /**
