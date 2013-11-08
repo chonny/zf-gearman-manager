@@ -29,15 +29,22 @@ class Module {
                         return $client;
                     } catch (\Exception $e) {
                         $sm->get('Zend\Log')->emerg('Gearman client cant connect to server! Message: ' . $e->getMessage());
+                        return new \stdClass();
                     }
                 },
                 'GearmanWorker' => function($sm) {
                     $config = $sm->get('config');
-                    $worker = new \GearmanWorker();
-                    $worker->setOptions(GEARMAN_WORKER_NON_BLOCKING);
-                    $worker->setTimeout($config['gearman_manager']['timeout']);
-                    $worker->addServers($config['gearman_manager']['host']);
-                    return $worker;
+                    try {
+                        $worker = new \GearmanWorker();
+                        $worker->setOptions(GEARMAN_WORKER_NON_BLOCKING);
+                        $worker->setTimeout($config['gearman_manager']['timeout']);
+                        $worker->addServers($config['gearman_manager']['host']);
+                        return $worker;
+                    } catch (\Exception $e) {
+                        $sm->get('Zend\Log')->emerg('Gearman worker cant connect to server! Message: ' . $e->getMessage());
+                        return new \stdClass();
+                    }
+                    
                 },
                 'ZfGearmanPeclManager' => function ($sm) {
                     $manager = new ZfGearmanPeclManager();
